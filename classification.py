@@ -60,7 +60,7 @@ label = df['Fake1'].to_numpy()
 
 ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
 optimal_args = dict(stop_words=get_stop_words(
-    "en"), analyzer=stemmed_words, min_df=2,)
+    "en"), analyzer=stemmed_words,  min_df=2)
 
 tfidf_vectorizer = TfidfVectorizer(optimal_args)
 tfidf_vector = tfidf_vectorizer.fit_transform(features)
@@ -74,12 +74,9 @@ X_train, X_test, y_train, y_test = train_test_split(
     random_state=random_seed,
     shuffle=True,
     stratify=label,
-
-
 )
 
 #### Modelling ####
-#clf = ComplementNB()
 clf = LinearSVC()
 model = clf.fit(X_train, y_train)
 prediction = model.predict(X_test)
@@ -94,9 +91,9 @@ review_vector_stuttgart = tfidf_vectorizer.transform(
     df_stuttgart[0].to_numpy())
 
 fake_percentage_venice = model.predict(review_vector_venice).mean() * 100
-fake_percentage_stuttgart = model.predict(review_vector_venice).mean()*100
-print("Fake reviews in Venice: " + str(fake_percentage_venice))
-print("Fake reviews in Stuttgart: " + str(fake_percentage_stuttgart))
+fake_percentage_stuttgart = model.predict(review_vector_stuttgart).mean()*100
+print("Fake reviews in Venedik (in Prozent): " + str(fake_percentage_venice))
+print("Fake reviews in Stuttgart (in Prozent): " + str(fake_percentage_stuttgart))
 # pdb.set_trace()
 
 
