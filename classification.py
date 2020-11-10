@@ -1,36 +1,43 @@
-import numpy as np
-import pandas as pd
-import pprint
-from itertools import chain
-from os import listdir
-import csv
-import pdb
-import nltk
-
-from nltk.stem.snowball import EnglishStemmer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from stop_words import get_stop_words
-from sklearn.multiclass import OneVsRestClassifier
-from sklearn.svm import SVC, LinearSVC, NuSVC
-from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB
-from autosklearn.experimental.askl2 import AutoSklearn2Classifier
-from imblearn.over_sampling import SMOTE
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.pipeline import Pipeline
-from nltk.stem import WordNetLemmatizer
-from nltk import word_tokenize
-
-from sklearn.metrics import (
-    average_precision_score,
-    classification_report,
-    plot_precision_recall_curve,
-    precision_recall_curve,
-)
 from sklearn.model_selection import (
     StratifiedShuffleSplit,
     cross_val_score,
     train_test_split,
 )
+from sklearn.metrics import (
+    average_precision_score,
+    classification_report,
+    plot_precision_recall_curve,
+)
+from nltk import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from imblearn.pipeline import Pipeline
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.over_sampling import SMOTE, SVMSMOTE
+from catboost import CatBoostClassifier
+from autosklearn.experimental.askl2 import AutoSklearn2Classifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB
+from sklearn.linear_model import SGDClassifier
+from sklearn.svm import SVC, LinearSVC, NuSVC
+from sklearn.model_selection import GridSearchCV
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.metrics import f1_score, make_scorer
+from sklearn.decomposition import PCA, TruncatedSVD
+from stop_words import get_stop_words
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.stem.snowball import EnglishStemmer
+from sklearn.metrics import f1_score, make_scorer
+from mlxtend.preprocessing import DenseTransformer
+import numpy as np
+import pandas as pd
+import pprint
+import os
+from itertools import chain
+from os import listdir
+import csv
+import pdb
+import nltk
+import scipy.sparse
 
 
 class LemmaTokenizer:
@@ -57,12 +64,21 @@ def get_df_of_dir(dir_path: str):
     return df
 
 
+def get_df_of_root_dir(path: str):
+    df = pd.DataFrame()
+    sub_dirs = [x[0] for x in os.walk(path)]
+    sub_dirs.pop(0)
+    for sub_dir in sub_dirs:
+        df = pd.concat([df, get_df_of_dir(sub_dir + "/")])
+    return df
+
+
 def read_trip_reviews():
-    venice_dir = "Al_Ponte_Antico_Hotel/en/"
-    stuttgart_dir = "Mövenpick_Hotel_Stuttgart_Airport/en/"
-    df_venice = get_df_of_dir(venice_dir)
+    venice_dir = "Venice2"
+    stuttgart_dir = "Stuttgart2"
+    df_venice = get_df_of_root_dir(venice_dir)
     df_venice['location'] = "venice"
-    df_stuttgart = get_df_of_dir(stuttgart_dir)
+    df_stuttgart = get_df_of_root_dir(stuttgart_dir)
     df_stuttgart['location'] = "stuttgart"
     return pd.concat([df_venice, df_stuttgart], ignore_index=True)
 
@@ -83,6 +99,7 @@ tfidf_vectorizer = TfidfVectorizer(args)
 tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
 #### Train Test Split ####
+'''
 random_seed = np.random.randint(1, len(label))
 X_train, X_test, y_train, y_test = train_test_split(
     tfidf_vector.toarray(),
@@ -92,15 +109,29 @@ X_train, X_test, y_train, y_test = train_test_split(
     shuffle=True,
     stratify=label,
 )
+'''
 
 ##### Over and undersampling #####
-oversample = SMOTE()
-X, y = oversample.fit_resample(X_train, y_train)
+over = SMOTE(sampling_strategy=0.2)
+under = RandomUnderSampler(sampling_strategy=0.5)
+steps = [('o', over), ('u', under)]
+pipeline = Pipeline(steps=steps)
+X, y = pipeline.fit_resample(tfidf_vector, label)
 
 #### Modelling ####
-clf = LinearSVC()
-model = clf.fit(X, y)
-prediction = model.predict(X_test)
+f1 = make_scorer(f1_score, average='macro')
+parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
+                    20.0, 30.0], "loss": ["hinge", "squared_hinge"],
+              "tol": [1e-1, 1e-3, 1e-6]}
+grid_model = GridSearchCV(
+    LinearSVC(), param_grid=parameters, n_jobs=2, verbose=True, cv=10, scoring=f1
+)
+# grid_model = SGDClassifier()
+# clf = KNeighborsClassifier()
+# grid_model = CatBoostClassifier()
+grid_model.fit(X, y)
+# pdb.set_trace()
+#prediction = grid_model.predict(X_test)
 
 #### Testing Reviews ####
 df_reviews = read_trip_reviews()
@@ -110,11 +141,10 @@ review_vector_venice = tfidf_vectorizer.transform(df_venice[0].to_numpy())
 review_vector_stuttgart = tfidf_vectorizer.transform(
     df_stuttgart[0].to_numpy())
 
-fake_percentage_venice = model.predict(review_vector_venice).mean() * 100
-fake_percentage_stuttgart = model.predict(review_vector_stuttgart).mean()*100
-#print("Fake reviews in Venedik (in Prozent): " + str(fake_percentage_venice))
-#print("Fake reviews in Stuttgart (in Prozent): " + str(fake_percentage_stuttgart))
-
-
-report = classification_report(y_test, prediction, output_dict=True)
-pprint.pprint(report)
+fake_percentage_venice = grid_model.predict(
+    DenseTransformer().fit_transform(review_vector_venice)).mean() * 100
+fake_percentage_stuttgart = grid_model.predict(
+    DenseTransformer().fit_transform(review_vector_stuttgart)).mean()*100
+print("Fake reviews in Venedik (in Prozent): " + str(fake_percentage_venice))
+print("Fake reviews in Stuttgart (in Prozent): " + str(fake_percentage_stuttgart))
+pprint.pprint("weighted f1 score: " + str(grid_model.best_score_))
