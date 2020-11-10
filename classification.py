@@ -112,7 +112,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 '''
 
 ##### Over and undersampling #####
-over = SMOTE(sampling_strategy=0.2)
+over = SMOTE(sampling_strategy=0.3)
 under = RandomUnderSampler(sampling_strategy=0.5)
 steps = [('o', over), ('u', under)]
 pipeline = Pipeline(steps=steps)
