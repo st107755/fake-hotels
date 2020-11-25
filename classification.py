@@ -83,68 +83,64 @@ def read_trip_reviews():
     return pd.concat([df_venice, df_stuttgart], ignore_index=True)
 
 
-df = pd.read_csv("fakenew.csv",  delimiter=";")
-features = df['Review'].to_numpy()
-label = df['Fake1'].to_numpy()
+def classification_run():
+    df = pd.read_csv("fakenew.csv",  delimiter=";")
+    features = df['Review'].to_numpy()
+    label = df['Fake1'].to_numpy()
 
-### Counter Vectorize / Stop Words / Stemming / Tfidf ###
-args = dict(stop_words=token_stop,
-            ngram_range=(1, 5),
-            strip_accents="ascii",
-            min_df=2,
-            tokenizer=LemmaTokenizer(),
-            )
+    ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
+    args = dict(stop_words=token_stop,
+                ngram_range=(1, 5),
+                strip_accents="ascii",
+                min_df=2,
+                tokenizer=LemmaTokenizer(),
+                )
 
-tfidf_vectorizer = TfidfVectorizer(args)
-tfidf_vector = tfidf_vectorizer.fit_transform(features)
+    tfidf_vectorizer = TfidfVectorizer(args)
+    tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
-#### Train Test Split ####
-'''
-random_seed = np.random.randint(1, len(label))
-X_train, X_test, y_train, y_test = train_test_split(
-    tfidf_vector.toarray(),
-    label,
-    test_size=0.2,
-    random_state=random_seed,
-    shuffle=True,
-    stratify=label,
-)
-'''
+    ##### Over and undersampling #####
+    over = SMOTE(sampling_strategy=0.3)
+    under = RandomUnderSampler(sampling_strategy=0.5)
+    steps = [('o', over), ('u', under)]
+    pipeline = Pipeline(steps=steps)
+    X, y = pipeline.fit_resample(tfidf_vector, label)
 
-##### Over and undersampling #####
-over = SMOTE(sampling_strategy=0.3)
-under = RandomUnderSampler(sampling_strategy=0.5)
-steps = [('o', over), ('u', under)]
-pipeline = Pipeline(steps=steps)
-X, y = pipeline.fit_resample(tfidf_vector, label)
+    #### Modelling ####
+    f1 = make_scorer(f1_score, average='macro')
+    parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
+                        20.0, 30.0], "loss": ["hinge", "squared_hinge"],
+                  "tol": [1e-1, 1e-3, 1e-6]}
+    model = GridSearchCV(
+        LinearSVC(), param_grid=parameters, n_jobs=2, verbose=True, cv=10, scoring=f1
+    )
+    # grid_model = SGDClassifier()
+    # clf = KNeighborsClassifier()
+    # grid_model = CatBoostClassifier()
+    model.fit(X, y)
 
-#### Modelling ####
-f1 = make_scorer(f1_score, average='macro')
-parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
-                    20.0, 30.0], "loss": ["hinge", "squared_hinge"],
-              "tol": [1e-1, 1e-3, 1e-6]}
-grid_model = GridSearchCV(
-    LinearSVC(), param_grid=parameters, n_jobs=2, verbose=True, cv=10, scoring=f1
-)
-# grid_model = SGDClassifier()
-# clf = KNeighborsClassifier()
-# grid_model = CatBoostClassifier()
-grid_model.fit(X, y)
-# pdb.set_trace()
-#prediction = grid_model.predict(X_test)
+    #### Testing Reviews ####
+    df_reviews = read_trip_reviews()
+    df_venice = df_reviews[df_reviews['location'] == 'venice']
+    df_stuttgart = df_reviews[df_reviews['location'] == 'stuttgart']
+    review_vector_venice = tfidf_vectorizer.transform(df_venice[0].to_numpy())
+    review_vector_stuttgart = tfidf_vectorizer.transform(
+        df_stuttgart[0].to_numpy())
 
-#### Testing Reviews ####
-df_reviews = read_trip_reviews()
-df_venice = df_reviews[df_reviews['location'] == 'venice']
-df_stuttgart = df_reviews[df_reviews['location'] == 'stuttgart']
-review_vector_venice = tfidf_vectorizer.transform(df_venice[0].to_numpy())
-review_vector_stuttgart = tfidf_vectorizer.transform(
-    df_stuttgart[0].to_numpy())
+    fake_percentage_venice = model.predict(
+        DenseTransformer().fit_transform(review_vector_venice)).mean() * 100
+    fake_percentage_stuttgart = model.predict(
+        DenseTransformer().fit_transform(review_vector_stuttgart)).mean()*100
+    #print("Fake reviews in Venedik (in Prozent): " + str(fake_percentage_venice))
+    # print("Fake reviews in Stuttgart (in Prozent): " +
+    #      str(fake_percentage_stuttgart))
+    #pprint.pprint("weighted f1 score: " + str(grid_model.best_score_))
+    return {"fake_stuttgart": fake_percentage_stuttgart, "fake_venice": fake_percentage_venice, "f1": model.best_score_}
 
-fake_percentage_venice = grid_model.predict(
-    DenseTransformer().fit_transform(review_vector_venice)).mean() * 100
-fake_percentage_stuttgart = grid_model.predict(
-    DenseTransformer().fit_transform(review_vector_stuttgart)).mean()*100
-print("Fake reviews in Venedik (in Prozent): " + str(fake_percentage_venice))
-print("Fake reviews in Stuttgart (in Prozent): " + str(fake_percentage_stuttgart))
-pprint.pprint("weighted f1 score: " + str(grid_model.best_score_))
+
+df = pd.DataFrame()
+for i in range(6):
+    output = classification_run()
+    df = df.append(output, ignore_index=True)
+
+print(df.var())
