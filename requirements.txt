@@ -1,0 +1,8 @@
+sklearn
+nltk
+imblearn
+catboost
+stop_words
+mlxtend
+numpy
+pandas 

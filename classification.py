@@ -14,7 +14,6 @@ from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.over_sampling import SMOTE, SVMSMOTE
 from catboost import CatBoostClassifier
-from autosklearn.experimental.askl2 import AutoSklearn2Classifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB
 from sklearn.linear_model import SGDClassifier
@@ -112,7 +111,7 @@ def classification_run():
                         20.0, 30.0], "loss": ["hinge", "squared_hinge"],
                   "tol": [1e-1, 1e-3, 1e-6]}
     model = GridSearchCV(
-        LinearSVC(), param_grid=parameters, n_jobs=2, verbose=True, cv=10, scoring=f1
+        LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=4, verbose=True, cv=10, scoring=f1
     )
     # grid_model = SGDClassifier()
     # clf = KNeighborsClassifier()
@@ -138,9 +137,5 @@ def classification_run():
     return {"fake_stuttgart": fake_percentage_stuttgart, "fake_venice": fake_percentage_venice, "f1": model.best_score_}
 
 
-df = pd.DataFrame()
-for i in range(6):
-    output = classification_run()
-    df = df.append(output, ignore_index=True)
+print(classification_run())
 
-print(df.var())
