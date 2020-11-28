@@ -6,3 +6,4 @@ stop_words
 mlxtend
 numpy
 pandas 
+scipy

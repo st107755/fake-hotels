@@ -37,6 +37,7 @@ import csv
 import pdb
 import nltk
 import scipy.sparse
+from scipy.optimize import minimize,Bounds
 
 
 class LemmaTokenizer:
@@ -82,10 +83,12 @@ def read_trip_reviews():
     return pd.concat([df_venice, df_stuttgart], ignore_index=True)
 
 
-def classification_run():
+def classification_run(x):
     df = pd.read_csv("fakenew.csv",  delimiter=";")
     features = df['Review'].to_numpy()
     label = df['Fake1'].to_numpy()
+    print("mean between classes" + str(df.Fake1.mean()))
+    #pdb.set_trace()
 
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
     args = dict(stop_words=token_stop,
@@ -99,19 +102,34 @@ def classification_run():
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
     ##### Over and undersampling #####
-    over = SMOTE(sampling_strategy=0.3)
-    under = RandomUnderSampler(sampling_strategy=0.5)
-    steps = [('o', over), ('u', under)]
+    
+    over_sampling_rate = x[0]
+    if over_sampling_rate < 0:
+        over_sampling_rate=0.13290058079945336
+    elif over_sampling_rate > 1:
+        over_sampling_rate=1
+    under_sampling_rate = x[1]
+    if under_sampling_rate < 0:
+        under_sampling_rate=0
+    elif under_sampling_rate > 1:
+        under_sampling_rate=1
+
+    print("Undersampling rate: " + str(under_sampling_rate))    
+    print("Oversampling rate: " +str(over_sampling_rate))
+    over = SMOTE(sampling_strategy=over_sampling_rate,n_jobs=4)
+    under = RandomUnderSampler(sampling_strategy=under_sampling_rate)
+    steps = [('o', over)  ]#, ('u', under)]
     pipeline = Pipeline(steps=steps)
     X, y = pipeline.fit_resample(tfidf_vector, label)
 
     #### Modelling ####
     f1 = make_scorer(f1_score, average='macro')
-    parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
-                        20.0, 30.0], "loss": ["hinge", "squared_hinge"],
-                  "tol": [1e-1, 1e-3, 1e-6]}
+    # parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
+    #                     20.0, 30.0], "loss": ["hinge", "squared_hinge"],
+    #               "tol": [1e-1, 1e-3, 1e-6]}
+    parameters ={}
     model = GridSearchCV(
-        LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=4, verbose=True, cv=10, scoring=f1
+        LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, cv=10, scoring=f1
     )
     # grid_model = SGDClassifier()
     # clf = KNeighborsClassifier()
@@ -134,8 +152,14 @@ def classification_run():
     # print("Fake reviews in Stuttgart (in Prozent): " +
     #      str(fake_percentage_stuttgart))
     #pprint.pprint("weighted f1 score: " + str(grid_model.best_score_))
-    return {"fake_stuttgart": fake_percentage_stuttgart, "fake_venice": fake_percentage_venice, "f1": model.best_score_}
+    #return {"fake_stuttgart": fake_percentage_stuttgart, "fake_venice": fake_percentage_venice, "f1": model.best_score_}
+    print("F1 Score: " + str(model.best_score_))
+    return 1 - model.best_score_
 
+x0 = [0.3,0.4]
+bounds = [(0.2,1.0)]
 
-print(classification_run())
+print(minimize(classification_run, x0, method='Nelder-Mead',
+               options={'xatol': 1e-1, 'disp': True}))
+#print(classification_run())
 
