@@ -37,8 +37,8 @@ import csv
 import pdb
 import nltk
 import scipy.sparse
-from scipy.optimize import minimize,Bounds
-
+from scipydirect import minimize
+import nlopt
 
 class LemmaTokenizer:
     ignore_tokens = [',', '.', ';', ':', '"', '``', "''", '`']
@@ -54,7 +54,7 @@ tokenizer = LemmaTokenizer()
 token_stop = tokenizer(' '.join(get_stop_words("en")))
 
 
-def get_df_of_dir(dir_path: str):
+def get_df_of_dir(dir_path):
     files = listdir(dir_path)
     df = pd.DataFrame()
     for file in files:
@@ -64,7 +64,7 @@ def get_df_of_dir(dir_path: str):
     return df
 
 
-def get_df_of_root_dir(path: str):
+def get_df_of_root_dir(path):
     df = pd.DataFrame()
     sub_dirs = [x[0] for x in os.walk(path)]
     sub_dirs.pop(0)
@@ -81,6 +81,10 @@ def read_trip_reviews():
     df_stuttgart = get_df_of_root_dir(stuttgart_dir)
     df_stuttgart['location'] = "stuttgart"
     return pd.concat([df_venice, df_stuttgart], ignore_index=True)
+
+def transver_undersamplingrate(up_rate,down_rate,invert=False):
+    inverse_up_rate = 1 - up_rate
+    return down_rate * inverse_up_rate + up_rate
 
 
 def classification_run(x):
@@ -100,28 +104,39 @@ def classification_run(x):
 
     tfidf_vectorizer = TfidfVectorizer(args)
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
+    
+    X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.2,random_state=42)
 
     ##### Over and undersampling #####
-    
+    over_sampling_rate = x[0]
+    under_sampling_rate = x[1]
+    '''
+    over_sampling_boundary = 1
     over_sampling_rate = x[0]
     if over_sampling_rate < 0:
         over_sampling_rate=0.13290058079945336
-    elif over_sampling_rate > 1:
-        over_sampling_rate=1
+    elif over_sampling_rate > over_sampling_boundary:
+        over_sampling_rate=over_sampling_boundary
     under_sampling_rate = x[1]
     if under_sampling_rate < 0:
         under_sampling_rate=0
     elif under_sampling_rate > 1:
         under_sampling_rate=1
+    '''
+    #pdb.set_trace()
 
+    #if over_sampling_rate > under_sampling_rate:
+    #    under_sampling_rate = over_sampling_rate 
+    under_sampling_rate = transver_undersamplingrate(over_sampling_rate,under_sampling_rate)
     print("Undersampling rate: " + str(under_sampling_rate))    
     print("Oversampling rate: " +str(over_sampling_rate))
     over = SMOTE(sampling_strategy=over_sampling_rate,n_jobs=4)
     under = RandomUnderSampler(sampling_strategy=under_sampling_rate)
-    steps = [('o', over)  ]#, ('u', under)]
+    steps = [('o', over),('u', under)]
     pipeline = Pipeline(steps=steps)
-    X, y = pipeline.fit_resample(tfidf_vector, label)
-
+    X, y = pipeline.fit_resample(X_train,y_train)
+    #X, y = tfidf_vector,label
+    
     #### Modelling ####
     f1 = make_scorer(f1_score, average='macro')
     # parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
@@ -129,8 +144,9 @@ def classification_run(x):
     #               "tol": [1e-1, 1e-3, 1e-6]}
     parameters ={}
     model = GridSearchCV(
-        LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, cv=10, scoring=f1
+        LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=f1,cv=10
     )
+    #model = LinearSVC()
     # grid_model = SGDClassifier()
     # clf = KNeighborsClassifier()
     # grid_model = CatBoostClassifier()
@@ -153,13 +169,15 @@ def classification_run(x):
     #      str(fake_percentage_stuttgart))
     #pprint.pprint("weighted f1 score: " + str(grid_model.best_score_))
     #return {"fake_stuttgart": fake_percentage_stuttgart, "fake_venice": fake_percentage_venice, "f1": model.best_score_}
-    print("F1 Score: " + str(model.best_score_))
-    return 1 - model.best_score_
+    #print("F1 Score: " + str(model.best_score_))
+    pred = model.predict(X_test)
+    f1 = f1_score(y_test, pred, average='weighted')
+    print("F1 Score: " + str(f1))
+    return 1 - f1
 
-x0 = [0.3,0.4]
-bounds = [(0.2,1.0)]
+bounds = [(0.2, 1), (0, 1)]
+res = minimize(classification_run, bounds)
+print(res)
 
-print(minimize(classification_run, x0, method='Nelder-Mead',
-               options={'xatol': 1e-1, 'disp': True}))
-#print(classification_run())
+#print(classification_run(x0))
 
