@@ -1,3 +1,7 @@
+from operator import index
+import pdb
+from nltk.corpus.reader import rte
+from nltk.sem.evaluate import Model
 from sklearn.model_selection import (
     StratifiedShuffleSplit,
     cross_val_score,
@@ -13,15 +17,19 @@ from nltk.stem import WordNetLemmatizer
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN
+from imblearn.combine import SMOTETomek,SMOTEENN
 from catboost import CatBoostClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB
-from sklearn.linear_model import SGDClassifier
+from sklearn.linear_model import SGDClassifier,LogisticRegression, LinearRegression
 from sklearn.svm import SVC, LinearSVC, NuSVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.metrics import f1_score, make_scorer
 from sklearn.decomposition import PCA, TruncatedSVD
+from sklearn.ensemble import StackingClassifier
+from sklearn.preprocessing import StandardScaler,MinMaxScaler
+from sklearn.pipeline import Pipeline
 from stop_words import get_stop_words
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from nltk.stem.snowball import EnglishStemmer
@@ -37,7 +45,7 @@ from os import listdir
 import csv
 import matplotlib.pyplot as plt 
 from sklearn.metrics import matthews_corrcoef
-from scipy.sparse import coo_matrix, hstack
+from scipy.sparse import coo_matrix, hstack,csr_matrix
 import nlopt
 
 class LemmaTokenizer:
@@ -86,20 +94,48 @@ def transver_undersamplingrate(up_rate,down_rate,invert=False):
     inverse_up_rate = 1 - up_rate
     return down_rate * inverse_up_rate + up_rate
 
-def word_count(vector):
-    pass
-def scentenc_count():
-    pass
+def word_count(df):
+    df["word_count"] = df['Review'].apply(lambda x: len(x.split()))
+    return df
+    
+def scentenc_count(df):
+    df["scentence_count"] = df['Review'].apply(lambda x: len(x.split('.')))
+    return df
 
+def word_length(df):
+    df["word_length"] = df['Review'].apply(lambda x: sum(len(word) for word in x.split(' ')) / len(x))
+    return df
+
+def text_length(df):
+    df["text_length"] = df['Review'].apply(lambda x: len(x))
+    return df
+
+def captial_letters_count(df):
+    df["capital_letters"] = df['Review'].apply(lambda x:  sum(1 for c in x if c.isupper()))    
+    return df
+
+def append_to_vector(vector,series,scale=False):
+    dense = vector.todense()
+    array = series.to_numpy().reshape(-1,1)
+    scaler = MinMaxScaler()
+    array = scaler.fit_transform(array)
+    dense = np.append(dense,array,axis=1)
+    return csr_matrix(dense)
+    
 def classification_run():
     ### Load Learning Data ###
     df = pd.read_csv("fakenew.csv",  delimiter=";")
     features = df['Review'].to_numpy()
     label = df['Fake1'].to_numpy()
+    df = word_count(df)
+    df = scentenc_count(df)
+    df = captial_letters_count(df)
+    df = word_length(df)
+    df = text_length(df)
 
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
     args = dict(stop_words=token_stop,
-                ngram_range=(1,2),
+                ngram_range=(1,4),
                 strip_accents="unicode",
                 # min_df=2,
                 #max_features=2000,
@@ -107,18 +143,26 @@ def classification_run():
                 )
 
     tfidf_vectorizer = TfidfVectorizer(args)
-    #tfidf_vectorizer= CountVectorizer(args)
+    # tfidf_vectorizer= CountVectorizer(args)
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
-    
+
+    tfidf_vector = append_to_vector(tfidf_vector,df["word_count"],True)
+    tfidf_vector = append_to_vector(tfidf_vector,df["scentence_count"],True)
+    tfidf_vector = append_to_vector(tfidf_vector,df["capital_letters"],True)
+    tfidf_vector = append_to_vector(tfidf_vector,df["text_length"],True)
+    tfidf_vector = append_to_vector(tfidf_vector,df["word_length"])
+
     X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.25,random_state=42,stratify=label)
 
     ##### Over and undersampling #####
-    over = SMOTE(n_jobs=4)
-    # over = ADASYN(n_jobs=4)
-    under = RandomUnderSampler()
-    steps = [('o', over),('u', under)]
-    pipeline = Pipeline(steps=steps)
-    X, y = pipeline.fit_resample(X_train,y_train)
+    # over = SMOTE(n_jobs=4)
+    # # over = ADASYN(n_jobs=4)
+    # under = RandomUnderSampler()
+    # steps = [('o', over),('u', under)]
+    # pipeline = Pipeline(steps=steps)
+    # X, y = pipeline.fit_resample(X_train,y_train)
+    smt = SMOTETomek(random_state=42,n_jobs=8)
+    X, y = smt.fit_resample(X_train,y_train)
     
     #### Modelling ####
     mc = make_scorer(matthews_corrcoef)
@@ -129,16 +173,22 @@ def classification_run():
     #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=f1,cv=10
     # )
     model = ComplementNB() 
-    #model = LinearSVC()
+    # model = MultinomialNB(fit_prior=False)
+    #model = LogisticRegression()
+    # model = GaussianNB()
+    # model = LinearSVC()
     # model = SGDClassifier()
     #model = KNeighborsClassifier()
     #model = CatBoostClassifier()
+    #   
     model.fit(X, y)
     # model.fit(DenseTransformer().fit_transform(X), DenseTransformer().fit_transform(y))
 
     #### Model Testing ####
     pred = model.predict(X_test)
+    # pred = model.predict(DenseTransformer().fit_transform(X_test))
     mc = matthews_corrcoef(y_test,pred)
+    # mc = matthews_corrcoef(DenseTransformer().fit_transform(y_test),pred)
     print("Matthews correlation coefficient: " + str(mc))
     plot_confusion_matrix(model, X_test, y_test) 
     plt.show()
