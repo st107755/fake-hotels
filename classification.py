@@ -2,6 +2,7 @@ from operator import index
 import pdb
 from nltk.corpus.reader import rte
 from nltk.sem.evaluate import Model
+from numpy import random
 from sklearn.model_selection import (
     StratifiedShuffleSplit,
     cross_val_score,
@@ -20,7 +21,7 @@ from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN
 from imblearn.combine import SMOTETomek,SMOTEENN
 from catboost import CatBoostClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB
+from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB,CategoricalNB,BernoulliNB 
 from sklearn.linear_model import SGDClassifier,LogisticRegression, LinearRegression
 from sklearn.svm import SVC, LinearSVC, NuSVC
 from sklearn.model_selection import GridSearchCV
@@ -38,15 +39,13 @@ from mlxtend.preprocessing import DenseTransformer
 from sklearn.metrics import plot_confusion_matrix
 import numpy as np
 import pandas as pd
-import pprint
 import os
-from itertools import chain
 from os import listdir
 import csv
 import matplotlib.pyplot as plt 
 from sklearn.metrics import matthews_corrcoef
 from scipy.sparse import coo_matrix, hstack,csr_matrix
-import nlopt
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 class LemmaTokenizer:
     ignore_tokens = [',', '.', ';', ':', '"', '``', "''", '`']
@@ -114,7 +113,15 @@ def captial_letters_count(df):
     df["capital_letters"] = df['Review'].apply(lambda x:  sum(1 for c in x if c.isupper()))    
     return df
 
-def append_to_vector(vector,series,scale=False):
+def sentiment(df):
+    analyser = SentimentIntensityAnalyzer()
+    df["sentiment"] = df['Review'].apply(lambda x: analyser.polarity_scores(x))
+    df["neg_sentiment"] = df["sentiment"].apply(lambda x: x.get("neg"))
+    df["pos_sentiment"] = df["sentiment"].apply(lambda x: x.get("pos"))
+    df["neu_sentiment"] = df["sentiment"].apply(lambda x: x.get("neu"))
+    return df
+
+def append_to_vector(vector,series,scale=True):
     dense = vector.todense()
     array = series.to_numpy().reshape(-1,1)
     scaler = MinMaxScaler()
@@ -127,12 +134,16 @@ def classification_run():
     df = pd.read_csv("fakenew.csv",  delimiter=";")
     features = df['Review'].to_numpy()
     label = df['Fake1'].to_numpy()
+
+    #### Extra Feature Extraction #### 
     df = word_count(df)
     df = scentenc_count(df)
     df = captial_letters_count(df)
     df = word_length(df)
     df = text_length(df)
+    df = sentiment(df)
 
+    #pdb.set_trace()
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
     args = dict(stop_words=token_stop,
                 ngram_range=(1,4),
@@ -146,11 +157,15 @@ def classification_run():
     # tfidf_vectorizer= CountVectorizer(args)
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
-    tfidf_vector = append_to_vector(tfidf_vector,df["word_count"],True)
-    tfidf_vector = append_to_vector(tfidf_vector,df["scentence_count"],True)
-    tfidf_vector = append_to_vector(tfidf_vector,df["capital_letters"],True)
-    tfidf_vector = append_to_vector(tfidf_vector,df["text_length"],True)
+    tfidf_vector = append_to_vector(tfidf_vector,df["word_count"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["scentence_count"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["capital_letters"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["text_length"])
     tfidf_vector = append_to_vector(tfidf_vector,df["word_length"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["neg_sentiment"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["pos_sentiment"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["neu_sentiment"])
+
 
     X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.25,random_state=42,stratify=label)
 
@@ -161,7 +176,7 @@ def classification_run():
     # steps = [('o', over),('u', under)]
     # pipeline = Pipeline(steps=steps)
     # X, y = pipeline.fit_resample(X_train,y_train)
-    smt = SMOTETomek(random_state=42,n_jobs=8)
+    smt = SMOTETomek(n_jobs=8,sampling_strategy=1,random_state=42)
     X, y = smt.fit_resample(X_train,y_train)
     
     #### Modelling ####
@@ -173,6 +188,7 @@ def classification_run():
     #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=f1,cv=10
     # )
     model = ComplementNB() 
+    # model = BernoulliNB()
     # model = MultinomialNB(fit_prior=False)
     #model = LogisticRegression()
     # model = GaussianNB()
