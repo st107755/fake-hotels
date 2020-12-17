@@ -16,7 +16,7 @@ from sklearn.metrics import (
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from imblearn.pipeline import Pipeline
-from imblearn.under_sampling import RandomUnderSampler
+from imblearn.under_sampling import RandomUnderSampler,TomekLinks,OneSidedSelection
 from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN
 from imblearn.combine import SMOTETomek,SMOTEENN
 from catboost import CatBoostClassifier
@@ -31,6 +31,9 @@ from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.ensemble import StackingClassifier
 from sklearn.preprocessing import StandardScaler,MinMaxScaler
 from sklearn.pipeline import Pipeline
+from sklearn.experimental import enable_hist_gradient_boosting
+from sklearn.ensemble import HistGradientBoostingClassifier,GradientBoostingClassifier
+from sklearn.tree import DecisionTreeClassifier
 from stop_words import get_stop_words
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from nltk.stem.snowball import EnglishStemmer
@@ -110,7 +113,7 @@ def text_length(df):
     return df
 
 def captial_letters_count(df):
-    df["capital_letters"] = df['Review'].apply(lambda x:  sum(1 for c in x if c.isupper()))    
+    df["capital_letters"] = df['Review'].apply(lambda x:  sum(1 for c in x if c.isupper()))
     return df
 
 def sentiment(df):
@@ -121,35 +124,40 @@ def sentiment(df):
     df["neu_sentiment"] = df["sentiment"].apply(lambda x: x.get("neu"))
     return df
 
-def append_to_vector(vector,series,scale=True):
-    dense = vector.todense()
-    array = series.to_numpy().reshape(-1,1)
-    scaler = MinMaxScaler()
-    array = scaler.fit_transform(array)
-    dense = np.append(dense,array,axis=1)
-    return csr_matrix(dense)
-    
+def first_person_pronouns(df):
+    df["fist_person"] = df['Review'].apply(lambda x:  sum(1 for c in x if c in ["I","my","me","mine","we","us","our","ours"]))
+    return df
+
+def exclamation_marks(df):
+    df["exclamation_marks"] = df['Review'].apply(lambda x:  sum(1 for c in x if c == "!"))
+    return df
+
+def positiveWords():
+     pass    
+
 def classification_run():
     ### Load Learning Data ###
     df = pd.read_csv("fakenew.csv",  delimiter=";")
     features = df['Review'].to_numpy()
     label = df['Fake1'].to_numpy()
 
-    #### Extra Feature Extraction #### 
-    df = word_count(df)
-    df = scentenc_count(df)
-    df = captial_letters_count(df)
-    df = word_length(df)
-    df = text_length(df)
-    df = sentiment(df)
+    #### Text Feature Extraction #### 
+    df_text = pd.DataFrame()
+    df_text['Review'] = df['Review']
+    df_text = word_count(df_text)
+    df_text = scentenc_count(df_text)
+    df_text = captial_letters_count(df_text)
+    df_text = word_length(df_text)
+    df_text = text_length(df_text)
+    df_text = sentiment(df_text)
+    df_text = first_person_pronouns(df_text)
+    df_text = exclamation_marks(df_text)
+    df_text.drop(columns=['Review','sentiment'],inplace=True)
 
-    #pdb.set_trace()
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
     args = dict(stop_words=token_stop,
                 ngram_range=(1,4),
                 strip_accents="unicode",
-                # min_df=2,
-                #max_features=2000,
                 tokenizer=LemmaTokenizer(),
                 )
 
@@ -157,57 +165,64 @@ def classification_run():
     # tfidf_vectorizer= CountVectorizer(args)
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
-    tfidf_vector = append_to_vector(tfidf_vector,df["word_count"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["scentence_count"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["capital_letters"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["text_length"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["word_length"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["neg_sentiment"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["pos_sentiment"])
-    tfidf_vector = append_to_vector(tfidf_vector,df["neu_sentiment"])
+    X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.2,random_state=42,stratify=label)
 
+    #### Scaling Text Features ####
+    text_features = df_text.to_numpy()
+    scaler = MinMaxScaler()
+    text_features =scaler.fit_transform(text_features)
+    
+    text_features = csr_matrix(text_features)
+    #pdb.set_trace()
+    #### Train Test Split ####
 
-    X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.25,random_state=42,stratify=label)
+    X_train_text,X_test_text,y_train_text,y_test_text = train_test_split(text_features, label,test_size=0.2,random_state=42,stratify=label)
 
     ##### Over and undersampling #####
-    # over = SMOTE(n_jobs=4)
-    # # over = ADASYN(n_jobs=4)
-    # under = RandomUnderSampler()
-    # steps = [('o', over),('u', under)]
-    # pipeline = Pipeline(steps=steps)
-    # X, y = pipeline.fit_resample(X_train,y_train)
     smt = SMOTETomek(n_jobs=8,sampling_strategy=1,random_state=42)
     X, y = smt.fit_resample(X_train,y_train)
-    
+
+    #### Text Feature sampling ####
+    smp = RandomUnderSampler(sampling_strategy=1)
+    X_train_text_sampl, y_train_text_sampl = smp.fit_resample(X_train_text,y_train_text)
+
     #### Modelling ####
-    mc = make_scorer(matthews_corrcoef)
-    parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
-                         20.0, 30.0], "loss": ["hinge", "squared_hinge"],
-                   "tol": [1e-1, 1e-3, 1e-6]}
-    # model = GridSearchCV(
-    #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=f1,cv=10
-    # )
-    model = ComplementNB() 
-    # model = BernoulliNB()
-    # model = MultinomialNB(fit_prior=False)
-    #model = LogisticRegression()
-    # model = GaussianNB()
-    # model = LinearSVC()
-    # model = SGDClassifier()
-    #model = KNeighborsClassifier()
-    #model = CatBoostClassifier()
-    #   
+    mc = make_scorer(matthews_corrcoef)   
+    model = ComplementNB()
     model.fit(X, y)
-    # model.fit(DenseTransformer().fit_transform(X), DenseTransformer().fit_transform(y))
+
+    ##### Text Feature Modelling #####
+    text_model = CatBoostClassifier(iterations=20000)
+    text_model.fit(X_train_text_sampl,y_train_text_sampl)
+
 
     #### Model Testing ####
+    pred_proba = model.predict_proba(X_test)
     pred = model.predict(X_test)
-    # pred = model.predict(DenseTransformer().fit_transform(X_test))
+    
     mc = matthews_corrcoef(y_test,pred)
-    # mc = matthews_corrcoef(DenseTransformer().fit_transform(y_test),pred)
     print("Matthews correlation coefficient: " + str(mc))
     plot_confusion_matrix(model, X_test, y_test) 
-    plt.show()
+    #plt.show()
+
+    #### Text Feature Model Testing ####
+    pred_proba_text = text_model.predict_proba(X_test_text)
+    pred_text = text_model.predict(X_test_text)
+    mc = matthews_corrcoef(y_test_text,pred_text)
+    print("Matthews correlation coefficient: " + str(mc))
+    plot_confusion_matrix(text_model, X_test_text, y_test_text) 
+    #plt.show()
+
+    ### Propability chain ### 
+    proba =  np.concatenate((pred_proba , pred_proba_text),axis=1)
+    comp_pred = []
+    for i in range(0,proba.shape[0]):
+        if (proba[i][0] + (proba[i][2] * 0.5)) < (proba[i][1] + (proba[i][3] * 0,5)):
+            comp_pred.append(1)
+        else:
+            comp_pred.append(0)
+    mc = matthews_corrcoef(y_test_text,comp_pred)
+    print("Matthews correlation coefficient chained network: " + str(mc))        
 
     #### Testing Reviews ####
 
