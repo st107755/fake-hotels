@@ -192,7 +192,7 @@ def classification_run():
     model.fit(X, y)
 
     ##### Text Feature Modelling #####
-    text_model = CatBoostClassifier(iterations=20000)
+    text_model = CatBoostClassifier()
     text_model.fit(X_train_text_sampl,y_train_text_sampl)
 
 
@@ -214,15 +214,13 @@ def classification_run():
     #plt.show()
 
     ### Propability chain ### 
-    proba =  np.concatenate((pred_proba , pred_proba_text),axis=1)
-    comp_pred = []
-    for i in range(0,proba.shape[0]):
-        if (proba[i][0] + (proba[i][2] * 0.5)) < (proba[i][1] + (proba[i][3] * 0,5)):
-            comp_pred.append(1)
-        else:
-            comp_pred.append(0)
-    mc = matthews_corrcoef(y_test_text,comp_pred)
-    print("Matthews correlation coefficient chained network: " + str(mc))        
+    X_train_chain = np.hstack((model.predict_proba(X_train),text_model.predict_proba(X_train_text)))
+    X_test_chain = np.hstack((model.predict_proba(X_test),text_model.predict_proba(X_test_text)))
+    chain_modell = CatBoostClassifier()
+    chain_modell.fit(X_train_chain,y_train)
+    chain_proba = chain_modell.predict(X_test_chain)
+    mc = matthews_corrcoef(y_test,chain_proba)
+    print("Matthews correlation coefficient chained network: " + str(mc))   
 
     #### Testing Reviews ####
 
