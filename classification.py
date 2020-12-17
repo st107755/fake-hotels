@@ -121,6 +121,14 @@ def sentiment(df):
     df["neu_sentiment"] = df["sentiment"].apply(lambda x: x.get("neu"))
     return df
 
+def first_person_pronouns(df):
+    df["fist_person"] = df['Review'].apply(lambda x:  sum(1 for c in x if c in ["I","my","me","mine","we","us","our","ours"]))
+    return df
+
+def exclamation_marks(df):
+    df["exclamation_marks"] = df['Review'].apply(lambda x:  sum(1 for c in x if c == "!"))
+    return df    
+
 def append_to_vector(vector,series,scale=True):
     dense = vector.todense()
     array = series.to_numpy().reshape(-1,1)
@@ -142,6 +150,8 @@ def classification_run():
     df = word_length(df)
     df = text_length(df)
     df = sentiment(df)
+    df = first_person_pronouns(df)
+    df = exclamation_marks(df)
 
     #pdb.set_trace()
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
@@ -165,6 +175,8 @@ def classification_run():
     tfidf_vector = append_to_vector(tfidf_vector,df["neg_sentiment"])
     tfidf_vector = append_to_vector(tfidf_vector,df["pos_sentiment"])
     tfidf_vector = append_to_vector(tfidf_vector,df["neu_sentiment"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["fist_person"])
+    tfidf_vector = append_to_vector(tfidf_vector,df["exclamation_marks"])
 
 
     X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.25,random_state=42,stratify=label)
