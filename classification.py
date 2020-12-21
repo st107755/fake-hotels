@@ -15,14 +15,14 @@ from sklearn.metrics import (
 )
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
-from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN,KMeansSMOTE,BorderlineSMOTE,SMOTENC
+from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN, KMeansSMOTE, BorderlineSMOTE, SMOTENC
 from catboost import CatBoostClassifier
-from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB,CategoricalNB,BernoulliNB 
-from sklearn.linear_model import SGDClassifier,LogisticRegression, LinearRegression
+from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB, CategoricalNB, BernoulliNB
+from sklearn.linear_model import SGDClassifier, LogisticRegression, LinearRegression
 from sklearn.svm import SVC, LinearSVC, NuSVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import f1_score, make_scorer
-from sklearn.preprocessing import StandardScaler,MinMaxScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from stop_words import get_stop_words
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from nltk.stem.snowball import EnglishStemmer
@@ -32,13 +32,17 @@ from sklearn.metrics import plot_confusion_matrix
 import numpy as np
 import pandas as pd
 import os
+from scipy.stats import ttest_ind, wilcoxon, mannwhitneyu
 import scipy
 from os import listdir
 import csv
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 from sklearn.metrics import matthews_corrcoef
-from scipy.sparse import coo_matrix, hstack,csr_matrix
+from scipy.sparse import coo_matrix, hstack, csr_matrix
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import bootstrapped.bootstrap as bs
+import bootstrapped.stats_functions as bs_stats
+
 
 class LemmaTokenizer:
     ignore_tokens = [',', '.', ';', ':', '"', '``', "''", '`']
@@ -52,6 +56,7 @@ class LemmaTokenizer:
 
 tokenizer = LemmaTokenizer()
 token_stop = tokenizer(' '.join(get_stop_words("en")))
+pd.set_option('mode.chained_assignment', None)
 
 
 def get_df_of_dir(dir_path):
@@ -59,7 +64,7 @@ def get_df_of_dir(dir_path):
     df = pd.DataFrame()
     for file in files:
         df_new = pd.read_csv(dir_path + file, engine='python',
-                             header=None, encoding='utf-8', error_bad_lines=False, quoting=csv.QUOTE_NONE, delimiter="§",names=["Review"])
+                             header=None, encoding='utf-8', error_bad_lines=False, quoting=csv.QUOTE_NONE, delimiter="§", names=["Review"])
         df = pd.concat([df, df_new], axis=0)
     return df
 
@@ -72,7 +77,7 @@ def get_df_of_root_dir(path):
         sub = get_df_of_dir(sub_dir + "/")
         # pdb.set_trace()
         sub["hotel"] = str(sub_dir).split("/")[1]
-        df = pd.concat([df,sub])
+        df = pd.concat([df, sub])
     return df
 
 
@@ -85,29 +90,38 @@ def read_trip_reviews():
     df_stuttgart['location'] = "stuttgart"
     return pd.concat([df_venice, df_stuttgart], ignore_index=True)
 
-def transver_undersamplingrate(up_rate,down_rate,invert=False):
+
+def transver_undersamplingrate(up_rate, down_rate, invert=False):
     inverse_up_rate = 1 - up_rate
     return down_rate * inverse_up_rate + up_rate
+
 
 def word_count(df):
     df["word_count"] = df['Review'].apply(lambda x: len(x.split()))
     return df
-    
+
+
 def scentenc_count(df):
     df["scentence_count"] = df['Review'].apply(lambda x: len(x.split('.')))
     return df
 
+
 def word_length(df):
-    df["word_length"] = df['Review'].apply(lambda x: sum(len(word) for word in x.split(' ')) / len(x))
+    df["word_length"] = df['Review'].apply(
+        lambda x: sum(len(word) for word in x.split(' ')) / len(x))
     return df
+
 
 def text_length(df):
     df["text_length"] = df['Review'].apply(lambda x: len(x))
     return df
 
+
 def captial_letters_count(df):
-    df["capital_letters"] = df['Review'].apply(lambda x:  sum(1 for c in x if c.isupper()))    
+    df["capital_letters"] = df['Review'].apply(
+        lambda x:  sum(1 for c in x if c.isupper()))
     return df
+
 
 def sentiment(df):
     analyser = SentimentIntensityAnalyzer()
@@ -117,35 +131,41 @@ def sentiment(df):
     df["neu_sentiment"] = df["sentiment"].apply(lambda x: x.get("neu"))
     return df
 
+
 def first_person_pronouns(df):
-    df["fist_person"] = df['Review'].apply(lambda x:  sum(1 for c in x if c in ["I","my","me","mine","we","us","our","ours"]))
+    df["fist_person"] = df['Review'].apply(lambda x:  sum(
+        1 for c in x if c in ["I", "my", "me", "mine", "we", "us", "our", "ours"]))
     return df
 
-def exclamation_marks(df):
-    df["exclamation_marks"] = df['Review'].apply(lambda x:  sum(1 for c in x if c == "!"))
-    return df    
 
-def append_to_vector(vector,series,scale=True):
+def exclamation_marks(df):
+    df["exclamation_marks"] = df['Review'].apply(
+        lambda x:  sum(1 for c in x if c == "!"))
+    return df
+
+
+def append_to_vector(vector, series, scale=True):
     dense = vector.todense()
-    array = series.to_numpy().reshape(-1,1)
+    array = series.to_numpy().reshape(-1, 1)
     scaler = MinMaxScaler()
     array = scaler.fit_transform(array)
-    dense = np.append(dense,array,axis=1)
+    dense = np.append(dense, array, axis=1)
     return csr_matrix(dense)
-    
 
-def append_text_features_to_vector(vector,df):
-    vector = append_to_vector(vector,df["word_count"])
-    vector = append_to_vector(vector,df["scentence_count"])
-    vector = append_to_vector(vector,df["capital_letters"])
-    vector = append_to_vector(vector,df["text_length"])
-    vector = append_to_vector(vector,df["word_length"])
-    vector = append_to_vector(vector,df["neg_sentiment"])
-    vector = append_to_vector(vector,df["pos_sentiment"])
-    vector = append_to_vector(vector,df["neu_sentiment"])
-    vector = append_to_vector(vector,df["fist_person"])
-    vector = append_to_vector(vector,df["exclamation_marks"])
+
+def append_text_features_to_vector(vector, df):
+    vector = append_to_vector(vector, df["word_count"])
+    vector = append_to_vector(vector, df["scentence_count"])
+    vector = append_to_vector(vector, df["capital_letters"])
+    vector = append_to_vector(vector, df["text_length"])
+    vector = append_to_vector(vector, df["word_length"])
+    vector = append_to_vector(vector, df["neg_sentiment"])
+    vector = append_to_vector(vector, df["pos_sentiment"])
+    vector = append_to_vector(vector, df["neu_sentiment"])
+    vector = append_to_vector(vector, df["fist_person"])
+    vector = append_to_vector(vector, df["exclamation_marks"])
     return vector
+
 
 def extract_text_features(df):
     df = word_count(df)
@@ -156,28 +176,41 @@ def extract_text_features(df):
     df = sentiment(df)
     df = first_person_pronouns(df)
     df = exclamation_marks(df)
-    return df 
+    return df
 
-def fake_percentage_list(df,model,vectorizer):
+
+def fake_percentage_list(df, model, vectorizer):
     percentages = []
     for hotel in df.hotel.unique():
         df_hotel = df[df['hotel'] == hotel]
         df_hotel = extract_text_features(df_hotel)
         # pdb.set_trace()
         vector = vectorizer.transform(df_hotel['Review'].to_numpy())
-        vector= append_text_features_to_vector(vector,df_hotel)
+        vector = append_text_features_to_vector(vector, df_hotel)
         fake_percentage = model.predict(vector).mean() * 100
         percentages.append(fake_percentage)
-    return percentages  
+    return percentages
+
 
 def f_test(x, y):
     x = np.array(x)
     y = np.array(y)
-    f = np.var(x, ddof=1)/np.var(y, ddof=1) #calculate F test statistic 
-    dfn = x.size-1 #define degrees of freedom numerator 
-    dfd = y.size-1 #define degrees of freedom denominator 
-    p = 1-scipy.stats.f.cdf(f, dfn, dfd) #find p-value of F test statistic 
-    return f, p      
+    f = np.var(x, ddof=1)/np.var(y, ddof=1)  # calculate F test statistic
+    dfn = x.size-1  # define degrees of freedom numerator
+    dfd = y.size-1  # define degrees of freedom denominator
+    p = 1-scipy.stats.f.cdf(f, dfn, dfd)  # find p-value of F test statistic
+    return f, p
+
+
+def super_sample(samples, i=100):
+    samples = np.array(samples)
+    super_sample = []
+    for j in range(0, i):
+        samples_for_mean = []
+        for k in range(0, len(samples)):
+            samples_for_mean.append(np.random.choice(samples, 1))
+        super_sample.append(np.array(samples_for_mean).mean())
+    return super_sample
 
 
 def classification_run():
@@ -186,12 +219,12 @@ def classification_run():
     features = df['Review'].to_numpy()
     label = df['Fake1'].to_numpy()
 
-    #### Extra Feature Extraction #### 
+    #### Extra Feature Extraction ####
     df = extract_text_features(df)
-   
+
     ### Counter Vectorize / Stop Words / Stemming / Tfidf ###
     args = dict(stop_words=token_stop,
-                ngram_range=(1,4),
+                ngram_range=(1, 4),
                 strip_accents="unicode",
                 tokenizer=LemmaTokenizer(),
                 )
@@ -199,24 +232,25 @@ def classification_run():
     tfidf_vectorizer = TfidfVectorizer(args)
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
-    tfidf_vector = append_text_features_to_vector(tfidf_vector,df)
+    tfidf_vector = append_text_features_to_vector(tfidf_vector, df)
 
-    X_train,X_test,y_train,y_test = train_test_split(tfidf_vector, label,test_size=0.25,random_state=42,stratify=label)
+    X_train, X_test, y_train, y_test = train_test_split(
+        tfidf_vector, label, test_size=0.25, random_state=42, stratify=label)
 
     ##### Over and undersampling #####
     over = SMOTE(n_jobs=4, random_state=370, sampling_strategy=1.0)
-    X, y = over.fit_resample(X_train,y_train)
-    
+    X, y = over.fit_resample(X_train, y_train)
+
     #### Modelling ####
     mc = make_scorer(matthews_corrcoef)
     parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
-                         20.0, 30.0], "loss": ["hinge", "squared_hinge"],
-                   "tol": [1e-1, 1e-3, 1e-6]}
+                        20.0, 30.0], "loss": ["hinge", "squared_hinge"],
+                  "tol": [1e-1, 1e-3, 1e-6]}
     # model = GridSearchCV(
     #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=mc,cv=10
     # )
-    model = LinearSVC()
-    #model = ComplementNB() 
+    #model = LinearSVC()
+    model = ComplementNB()
     #model = LogisticRegression()
     # model = SGDClassifier()
 
@@ -224,9 +258,9 @@ def classification_run():
 
     #### Model Testing ####
     pred = model.predict(X_test)
-    mc = matthews_corrcoef(y_test,pred)
+    mc = matthews_corrcoef(y_test, pred)
     print("Matthews correlation coefficient: " + str(mc))
-    plot_confusion_matrix(model, X_test, y_test) 
+    plot_confusion_matrix(model, X_test, y_test)
     plt.show()
 
     #### Testing Reviews ####
@@ -235,9 +269,19 @@ def classification_run():
     df_venice = df_reviews[df_reviews['location'] == 'venice']
     df_stuttgart = df_reviews[df_reviews['location'] == 'stuttgart']
 
-    fake_venice = fake_percentage_list(df_venice,model,tfidf_vectorizer)
-    fake_stuttgart = fake_percentage_list(df_stuttgart,model,tfidf_vectorizer)
-    print(f_test(fake_stuttgart,fake_venice))
+    fake_venice = fake_percentage_list(df_venice, model, tfidf_vectorizer)
+    fake_stuttgart = fake_percentage_list(
+        df_stuttgart, model, tfidf_vectorizer)
+    super_sample_venice = super_sample(fake_venice)
+    super_sample_stuttgart = super_sample(fake_stuttgart)
+    # pd.DataFrame({'venice':super_sample_venice, 'stuttgart':super_sample_stuttgart}).plot.hist()
+    # plt.show()
+    #print (super_sample(fake_stuttgart))
+    # print(f_test(fake_stuttgart,fake_venice))
+    # print(bs.bootstrap(np.array(fake_venice), stat_func=bs_stats.mean))
+    # print(bs.bootstrap(np.array(fake_stuttgart), stat_func=bs_stats.mean))
+    print(ttest_ind(fake_venice, fake_stuttgart, equal_var=False))
+    print(mannwhitneyu(fake_venice, fake_stuttgart))
+
 
 classification_run()
-
