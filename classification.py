@@ -23,6 +23,8 @@ from sklearn.svm import SVC, LinearSVC, NuSVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import f1_score, make_scorer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.utils import shuffle
+import scipy.stats as stats
 from stop_words import get_stop_words
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from nltk.stem.snowball import EnglishStemmer
@@ -32,7 +34,7 @@ from sklearn.metrics import plot_confusion_matrix
 import numpy as np
 import pandas as pd
 import os
-from scipy.stats import ttest_ind, wilcoxon, mannwhitneyu
+from scipy.stats import ttest_ind, wilcoxon, mannwhitneyu, ttest_rel
 import scipy
 from os import listdir
 import csv
@@ -178,8 +180,14 @@ def extract_text_features(df):
     df = exclamation_marks(df)
     return df
 
+def total_fake_percentage(df,model,vectorizer):
+    df = extract_text_features(df)
+    vector = vectorizer.transform(df['Review'].to_numpy())
+    vector = append_text_features_to_vector(vector, df)
+    return model.predict(vector).mean()
 
-def fake_percentage_list(df, model, vectorizer):
+
+def hotel_fake_percentage_list(df, model, vectorizer):
     percentages = []
     for hotel in df.hotel.unique():
         df_hotel = df[df['hotel'] == hotel]
@@ -191,6 +199,21 @@ def fake_percentage_list(df, model, vectorizer):
         percentages.append(fake_percentage)
     return percentages
 
+def random_fake_percentage_list(df,model,vectorizer,parts=20):
+    percentages = []
+    df = shuffle(df)
+    df_length = len(df.index)
+    part_length = df_length/parts
+    for i in range(0,parts):
+        start = int(i * part_length)
+        end = int((i+1) * part_length)
+        part = df[start:end]
+        part = extract_text_features(part)
+        vector = vectorizer.transform(part['Review'].to_numpy())
+        vector = append_text_features_to_vector(vector, part)
+        fake_percentage = model.predict(vector).mean() * 100
+        percentages.append(fake_percentage)
+    return percentages
 
 def f_test(x, y):
     x = np.array(x)
@@ -211,6 +234,9 @@ def super_sample(samples, i=100):
             samples_for_mean.append(np.random.choice(samples, 1))
         super_sample.append(np.array(samples_for_mean).mean())
     return super_sample
+
+def average(lst): 
+    return sum(lst) / len(lst) 
 
 
 def classification_run():
@@ -249,9 +275,9 @@ def classification_run():
     # model = GridSearchCV(
     #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=mc,cv=10
     # )
-    #model = LinearSVC()
+    # model = LinearSVC()
     model = ComplementNB()
-    #model = LogisticRegression()
+    # model = LogisticRegression()
     # model = SGDClassifier()
 
     model.fit(X, y)
@@ -261,7 +287,7 @@ def classification_run():
     mc = matthews_corrcoef(y_test, pred)
     print("Matthews correlation coefficient: " + str(mc))
     plot_confusion_matrix(model, X_test, y_test)
-    plt.show()
+    # plt.show()
 
     #### Testing Reviews ####
 
@@ -269,19 +295,23 @@ def classification_run():
     df_venice = df_reviews[df_reviews['location'] == 'venice']
     df_stuttgart = df_reviews[df_reviews['location'] == 'stuttgart']
 
-    fake_venice = fake_percentage_list(df_venice, model, tfidf_vectorizer)
-    fake_stuttgart = fake_percentage_list(
-        df_stuttgart, model, tfidf_vectorizer)
-    super_sample_venice = super_sample(fake_venice)
-    super_sample_stuttgart = super_sample(fake_stuttgart)
-    # pd.DataFrame({'venice':super_sample_venice, 'stuttgart':super_sample_stuttgart}).plot.hist()
+    fake_venice = total_fake_percentage(df_venice, model, tfidf_vectorizer)
+    fake_stuttgart = total_fake_percentage(df_stuttgart, model, tfidf_vectorizer)
+    # stats.probplot(fake_stuttgart, dist="norm", plot=plt)
     # plt.show()
-    #print (super_sample(fake_stuttgart))
-    # print(f_test(fake_stuttgart,fake_venice))
-    # print(bs.bootstrap(np.array(fake_venice), stat_func=bs_stats.mean))
-    # print(bs.bootstrap(np.array(fake_stuttgart), stat_func=bs_stats.mean))
-    print(ttest_ind(fake_venice, fake_stuttgart, equal_var=False))
-    print(mannwhitneyu(fake_venice, fake_stuttgart))
+    venice_fake = fake_venice * len(df_venice.index)
+    venice_non_fake = (1-fake_venice) * len(df_venice.index)
+    stuttgart_fake = fake_stuttgart * len(df_stuttgart.index)
+    stuttgart_non_fake = (1-fake_stuttgart) * len(df_stuttgart.index)
+    oddsratio, pvalue = stats.fisher_exact([[venice_fake, venice_non_fake], [stuttgart_fake, stuttgart_non_fake]])
+    print(pvalue)
+    # print("Venice Fake: " + str())
+    # print("Venice Non Fake: " + str())
+    # print("Stuttgart Fake: " + str())
+    # print("Stuttgart Non Fake: " + str())
+    # print(ttest_ind(fake_venice, fake_stuttgart))
+    # print(ttest_rel(fake_venice, fake_stuttgart))
+    # print(mannwhitneyu(fake_venice, fake_stuttgart))
 
 
 classification_run()
