@@ -16,7 +16,7 @@ from sklearn.metrics import (
 from nltk import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from imblearn.over_sampling import SMOTE, SVMSMOTE, ADASYN, KMeansSMOTE, BorderlineSMOTE, SMOTENC
-from catboost import CatBoostClassifier
+# from catboost import CatBoostClassifier
 from sklearn.naive_bayes import ComplementNB, GaussianNB, MultinomialNB, CategoricalNB, BernoulliNB
 from sklearn.linear_model import SGDClassifier, LogisticRegression, LinearRegression
 from sklearn.svm import SVC, LinearSVC, NuSVC
@@ -42,8 +42,6 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import matthews_corrcoef
 from scipy.sparse import coo_matrix, hstack, csr_matrix
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import bootstrapped.bootstrap as bs
-import bootstrapped.stats_functions as bs_stats
 
 
 class LemmaTokenizer:
@@ -77,7 +75,6 @@ def get_df_of_root_dir(path):
     sub_dirs.pop(0)
     for sub_dir in sub_dirs:
         sub = get_df_of_dir(sub_dir + "/")
-        # pdb.set_trace()
         sub["hotel"] = str(sub_dir).split("/")[1]
         df = pd.concat([df, sub])
     return df
@@ -192,7 +189,6 @@ def hotel_fake_percentage_list(df, model, vectorizer):
     for hotel in df.hotel.unique():
         df_hotel = df[df['hotel'] == hotel]
         df_hotel = extract_text_features(df_hotel)
-        # pdb.set_trace()
         vector = vectorizer.transform(df_hotel['Review'].to_numpy())
         vector = append_text_features_to_vector(vector, df_hotel)
         fake_percentage = model.predict(vector).mean() * 100
@@ -214,26 +210,6 @@ def random_fake_percentage_list(df,model,vectorizer,parts=20):
         fake_percentage = model.predict(vector).mean() * 100
         percentages.append(fake_percentage)
     return percentages
-
-def f_test(x, y):
-    x = np.array(x)
-    y = np.array(y)
-    f = np.var(x, ddof=1)/np.var(y, ddof=1)  # calculate F test statistic
-    dfn = x.size-1  # define degrees of freedom numerator
-    dfd = y.size-1  # define degrees of freedom denominator
-    p = 1-scipy.stats.f.cdf(f, dfn, dfd)  # find p-value of F test statistic
-    return f, p
-
-
-def super_sample(samples, i=100):
-    samples = np.array(samples)
-    super_sample = []
-    for j in range(0, i):
-        samples_for_mean = []
-        for k in range(0, len(samples)):
-            samples_for_mean.append(np.random.choice(samples, 1))
-        super_sample.append(np.array(samples_for_mean).mean())
-    return super_sample
 
 def average(lst): 
     return sum(lst) / len(lst) 
@@ -259,7 +235,8 @@ def classification_run():
     tfidf_vector = tfidf_vectorizer.fit_transform(features)
 
     tfidf_vector = append_text_features_to_vector(tfidf_vector, df)
-
+    
+    ### Train Test Split ###
     X_train, X_test, y_train, y_test = train_test_split(
         tfidf_vector, label, test_size=0.25, random_state=42, stratify=label)
 
@@ -269,16 +246,11 @@ def classification_run():
 
     #### Modelling ####
     mc = make_scorer(matthews_corrcoef)
-    parameters = {"C": [0.001, 0.01, 0.1, 1.0, 10.0,
-                        20.0, 30.0], "loss": ["hinge", "squared_hinge"],
-                  "tol": [1e-1, 1e-3, 1e-6]}
-    # model = GridSearchCV(
-    #      LinearSVC(max_iter=20000), param_grid=parameters, n_jobs=-1, verbose=True, scoring=mc,cv=10
-    # )
     # model = LinearSVC()
-    model = ComplementNB()
+    # model = ComplementNB()
     # model = LogisticRegression()
     # model = SGDClassifier()
+    model = MultinomialNB()
 
     model.fit(X, y)
 
@@ -287,7 +259,7 @@ def classification_run():
     mc = matthews_corrcoef(y_test, pred)
     print("Matthews correlation coefficient: " + str(mc))
     plot_confusion_matrix(model, X_test, y_test)
-    # plt.show()
+    plt.show()
 
     #### Testing Reviews ####
 
@@ -297,24 +269,22 @@ def classification_run():
 
     fake_venice = total_fake_percentage(df_venice, model, tfidf_vectorizer)
     fake_stuttgart = total_fake_percentage(df_stuttgart, model, tfidf_vectorizer)
-    # stats.probplot(fake_stuttgart, dist="norm", plot=plt)
-    # plt.show()
+
     venice_fake = fake_venice * len(df_venice.index)
     venice_non_fake = (1-fake_venice) * len(df_venice.index)
     stuttgart_fake = fake_stuttgart * len(df_stuttgart.index)
     stuttgart_non_fake = (1-fake_stuttgart) * len(df_stuttgart.index)
     oddsratio, pvalue = stats.fisher_exact([[stuttgart_fake,venice_fake], [stuttgart_non_fake,venice_non_fake]])
+
+    ### Results ###
     print("P-value Fischer test: " + str(pvalue))
     print("Odds Ratio Fischer test: " + str(oddsratio))
     print("Fake Prozente Venedig: " + str(fake_venice))
     print("Fake Prozente Stuttgart: " + str(fake_stuttgart))
-    # print("Venice Fake: " + str())
-    # print("Venice Non Fake: " + str())
-    # print("Stuttgart Fake: " + str())
-    # print("Stuttgart Non Fake: " + str())
-    # print(ttest_ind(fake_venice, fake_stuttgart))
-    # print(ttest_rel(fake_venice, fake_stuttgart))
-    # print(mannwhitneyu(fake_venice, fake_stuttgart))
+    print("Venice Fake: " + str(venice_fake))
+    print("Venice Non Fake: " + str(venice_non_fake))
+    print("Stuttgart Fake: " + str(stuttgart_fake))
+    print("Stuttgart Non Fake: " + str(stuttgart_non_fake))
 
 
 classification_run()
